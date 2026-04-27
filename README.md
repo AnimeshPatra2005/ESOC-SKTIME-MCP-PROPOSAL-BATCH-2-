@@ -16,10 +16,11 @@ When auditing the current architecture and reviewing community issues, three cri
 
 For an LLM to reliably use a tool, it requires a strict JSON Schema (a "rulebook") detailing exactly what data types are allowed. However, the underlying sktime estimators currently lack `__init__` type hints. Without these hints, the MCP server cannot generate a strict schema.
 
-*Fig1. The image clearly shows us the missing type hints in the forecaster **ARIMA**, the schema which LLM gets does not **contain** any information due to which it ends up guessing the types **a** hence more prone to hallucinations*
+![Image 1](images/1.png)
+*Fig1. The image clearly shows us the missing type hints in the forecaster **ARIMA**, the schema which LLM gets does not **contain** any information due to which it ends up guessing the types hence more prone to hallucinations*
 
 ---
-
+![Image 2](images/2.png)
 ### 2. Fatal Exception Leaks (Why can't the LLM fix its own mistakes?)
 
 When an LLM inevitably hallucinates a bad parameter, the server lacks a defensive barrier. Instead of gracefully rejecting the input, the underlying sktime engine throws a raw Python `TypeError` or `ValueError` (as tracked in issues #172 and #192). This exception completely crashes into the agent loop. The LLM receives a messy stack trace instead of an "LLM-recoverable error" — a structured JSON response (e.g., `{"error": "horizon must be an integer"}`) that would allow the agent to understand its mistake and try again on the next turn.
@@ -56,6 +57,7 @@ The core engineering challenge of Phase 1 is resolving the conflict between what
 
 Initially, one might assume we can just use Python's `inspect.signature` to infer types based on default values. However, during prototyping, I discovered this creates a severe limitation.
 
+![Image 3](images/3.png)
 *Fig 3: The limitations of relying on inspection. As shown in this prototype, **the inspect** shows the default for **sp** is **1** (an integer). If we build the schema solely from **inspect**, the LLM is strictly locked to integers. However, **numpydoc** reveals the true capability: **int or None**. If we rely on code defaults, we actively block the LLM from **utilizing** valid features like **sp=None**.*
 
 ### The Intelligent Schema Compiler
@@ -69,7 +71,9 @@ To solve this, Phase 1 will implement a robust NLP parser utilizing `numpydoc.do
 - **Required Status:** Inspect will be used exclusively as the final safety net to determine if a parameter has no default value and must be injected into the schema's `"required"` list.
 
 **VIDEO LINK (The video explains the initial prototype of Phase 1 and why it's required) —** [https://youtu.be/BV8Cxm6Gn_E](https://youtu.be/BV8Cxm6Gn_E)
-
+![Image 4](images/4.png)
+![Image 5](images/5.png)
+![Image 6](images/6.png)
 *Fig 4-6: The Intelligent Schema Compiler in action. The prototype successfully parses standard types (Case 1) and complex union types like "array-like" (Case 2) into mathematically strict JSON Schema constraints. For highly complex Python types that cannot map to JSON (Case 3), the parser triggers a Graceful Degradation fallback — opening the JSON constraints to prevent false API rejections, while injecting the raw type requirements directly into the text description so the LLM can self-correct using its native reasoning.*
 
 ---
@@ -99,17 +103,18 @@ Phase 3 is the essential validation of the entire project. While Phases 1 and 2 
 - **Testing the Phase 2 Recovery:** The suite specifically benchmarks the Self-Correction Rate. When the Middleware (Phase 2) sends back an error message, Phase 3 measures if the LLM successfully uses that specific feedback to rectify its tool call in a single turn.
 
 - **Automating the Human Loop:** Currently, sktime-mcp reliability is measured by user complaints. I will replace this with a synthetic evaluation dataset of 30+ core workflows. This allows maintainers to verify that a new update hasn't "blinded" the agent, ensuring that the improvements from Phases 1 and 2 remain robust across different model versions (Claude, Gemini, Llama).
+- **Strategic Isolation:** Explicitly decouple the Agentic Benchmarking suite from the core pytest suite. This tool will be architected as a manual diagnostic utility (eg  make benchmark or python -m eval), ensuring no token costs or non-deterministic failures are introduced into the standard PR CI/CD pipeline.
 
 To ensure this remains a permanent, zero-cost asset for the community; the suite features a 'Bring Your Own Key' architecture. Maintainers can choose between high-fidelity frontier judges (e.g., GPT-4o) or route the judge to a local server (e.g., Ollama) for free, private testing in GitHub Actions.
+
+![Image 7](images/7.png)
+![Image 8](images/8.png)
 
 *Fig. 7-8. These screenshots demonstrate the final automated testing pipeline evaluating simulated LLM ToolCall traces against the dynamic schemas generated in Phase 1. Using a 'Bring Your Own Key' architecture, a custom **Gemini-2.5-Flash-Lite** judge mathematically scores schema adherence. The top image shows a passing test (Score: 1.0) where the LLM successfully adhered to the integer constraint (**maxiter=100**). The bottom image demonstrates the framework successfully catching a simulated hallucination (Score: 0.0), correctly identifying that the string **'hundred'** violates the schema constraint. This pipeline replaces manual QA, allowing maintainers to mathematically verify that any future changes to prompts or schemas do not degrade the LLM's performance.*
 
 ---
 
 ## Timeline
-
----
-
 ## Phase 1: Dynamic JSON Schema Generation (Weeks 1–5)
 
 ### Week 1: Signature-Level Introspection & Default-Value Type Inference
@@ -194,7 +199,7 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
 **Tasks:**
 
-- Run the schema generator initially against a comprehensive set of forecasters which sktime-mcp has to offer and then as per instructions move on to other estimators across all sktime modules (classification, clustering, transformation) to identify parsing failures.
+- Run the schema generator against the full set of forecasters currently supported by sktime-mcp's execution tools. The target is ≥85% strict schema coverage across this set; parameters that fail parsing will fall back to description-only hints rather than blocking tool registration. Expansion to other estimator types will be scoped based on maintainer direction during the review phase.
 
 - Catalog the success rate: track what percentage of parameters are strictly typed vs. gracefully degraded, providing a quantitative metric for the pipeline's coverage.
 
@@ -254,7 +259,7 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
   - `SCHEMA_VALIDATION_ERROR` — **New.** Type mismatch caught by the jsonschema middleware before reaching sktime. This is the primary contribution of Phase 2.
 
-  - `EXECUTION_ERROR` — Legitimate runtime errors from sktime (e.g., convergence failure, scipy crashes) that currently leak as raw tracebacks.
+  - `EXECUTION_ERROR` — The EXECUTION_ERROR wrapper will specifically target sktime and scikit-learn domain exceptions while allowing critical system exceptions (e.g., MemoryError, KeyboardInterrupt) to propagate, ensuring server observability is maintained.
 
 - Write parameterized pytest test cases covering:
 
@@ -299,7 +304,6 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
   - Route to a local Ollama server (e.g., Phi-3, Llama 3) for zero-cost, offline testing in GitHub Actions.
 
 - Define a custom GEval metric (`MCP Schema Adherence`) that evaluates whether the ToolCall traces generated by the LLM conform to the JSON Schema constraints (correct types, valid enum values, no hallucinated parameters).
-
 ---
 
 ### Week 10: Creating Evaluation Dataset and Final Documentation
