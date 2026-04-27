@@ -10,13 +10,11 @@ The Model Context Protocol (MCP) server for sktime is currently **prone to fatal
 
 ## The Problem & Evidence
 
-The sktime-mcp project executes complex time-series pipelines entirely through natural language, however because the server's stability currently relies heavily on the large language model's (LLM) inherent ability to perfectly guess parameter types, multi-step agentic loops frequently result in fatal server crashes.
-
 When auditing the current architecture and reviewing community issues, three critical failure points emerge that prevent true autonomous reliability:
 
 ### 1. Schema Blindness (Why is the LLM hallucinating?)
 
-For an LLM to reliably use a tool, it requires a strict JSON Schema (a "rulebook") detailing exactly what data types are allowed. However, the underlying sktime estimators currently lack `__init__` type hints. Without these hints, the MCP server cannot generate a strict schema. The LLM is forced to fly blind, leading to inevitable hallucinations — such as passing a string to a parameter that strictly requires a positive integer.
+For an LLM to reliably use a tool, it requires a strict JSON Schema (a "rulebook") detailing exactly what data types are allowed. However, the underlying sktime estimators currently lack `__init__` type hints. Without these hints, the MCP server cannot generate a strict schema.
 
 *Fig1. The image clearly shows us the missing type hints in the forecaster **ARIMA**, the schema which LLM gets does not **contain** any information due to which it ends up guessing the types **a** hence more prone to hallucinations*
 
