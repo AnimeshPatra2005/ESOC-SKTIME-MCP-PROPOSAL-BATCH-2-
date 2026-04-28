@@ -131,7 +131,7 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
 - Validate the generated schemas against known estimators (e.g., ARIMA, ExponentialSmoothing, NaiveForecaster) to confirm accuracy.
 
-**Known Limitation (to be addressed in Weeks 3–4):** Parameters with `default=None` (e.g., `ARIMA(order=None)`) will be incorrectly typed as `"string"` because `type(None)` carries no semantic information about the parameter's actual expected type. This affects approximately 40–60% of parameters across sktime estimators. Also default value does not mean the only allowed data type as we established in our findings earlier.
+**Known Limitation (to be addressed in Weeks 3–4):** Parameters with `default=None` (e.g., `ARIMA(start_params=None)`, `ARIMA(trend=None)`, `AutoARIMA(d=None)`) will be incorrectly typed as `"string"` because `type(None)` carries no semantic information about the parameter's actual expected type. This affects approximately 40–60% of parameters across sktime estimators. Furthermore, a parameter's default value does not comprehensively represent its allowed data types, necessitating the NLP parser introduced in Week 3.
 
 ---
 
@@ -148,6 +148,8 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 - Ensure the schema is served dynamically: if a new estimator is added to sktime, the server automatically generates and serves its schema without any manual hardcoding.
 
 - Test the integration end-to-end by connecting an MCP client (e.g., Claude Desktop) and verifying that the LLM now receives typed parameter hints in its tool definitions.
+
+- **Permissive Generation (Inform, Don't Enforce):** During Phase 1, the generated schemas are strictly used to *inform* the LLM — updating the `inputSchema` field in `server.py` so the LLM receives detailed parameter rules instead of a blank `{"type": "object"}`. At this stage, the server will not actively block requests if the LLM violates the schema; it relies on sktime's existing internal errors (the current behavior). This allows us to safely validate the accuracy of the generated schemas in production before turning on strict server-side enforcement in Phase 2 (Week 6). If the NLP parser cannot confidently map a docstring type to a JSON primitive, it will leave the parameter's JSON constraint open and inject the raw type requirements into the text `description`, preventing False Positive rejections where valid inputs might be accidentally blocked.
 
 ---
 
@@ -232,7 +234,9 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
 - Inject the validation function into `server.py`'s request handling pipeline, ensuring it executes **before** any estimator instantiation or method call.
 
-- Wrap all sktime execution boundaries in `executor.py` (`fit`, `predict`, `transform`) with a generic `try/except Exception` block to safely intercept any runtime errors that pass through schema validation. Implement a `warnings.catch_warnings()` context manager to capture soft warnings (e.g., `ConvergenceWarning`) and forward them to the LLM as self-correction hints.
+- **Enforcement Intensity controlled via Feature Flag:** To safely introduce strict validation without risking False Positive rejections from imperfect schemas, `validate_tool_params()` will be controlled by an environment variable (`ENFORCE_STRICT_SCHEMA`). In **Audit Mode** (default initially), validation runs but failures only log a warning and let the payload pass through to sktime. In **Strict Mode**, validation actively intercepts malformed payloads and returns the structured `SCHEMA_VALIDATION_ERROR` to the LLM for self-correction. The switch to Strict Mode by default will be made once Phase 3 benchmarks prove the schemas are highly accurate.
+
+- Wrap all sktime execution boundaries in `executor.py` (`fit`, `predict`) with a generic `try/except Exception` block to safely intercept any runtime errors that pass through schema validation. Implement a `warnings.catch_warnings()` context manager to capture soft warnings (e.g., `ConvergenceWarning`) and forward them to the LLM as self-correction hints.
 
 - Verify that valid payloads pass through the middleware untouched and reach the executor normally.
 
