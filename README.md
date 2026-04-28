@@ -70,7 +70,7 @@ To solve this, Phase 1 will implement a robust NLP parser utilizing `numpydoc.do
 
 - **Required Status:** Inspect will be used exclusively as the final safety net to determine if a parameter has no default value and must be injected into the schema's `"required"` list.
 
-**VIDEO LINK (The video explains the initial prototype of Phase 1 and why it's required) —** [https://youtu.be/BV8Cxm6Gn_E](https://youtu.be/BV8Cxm6Gn_E)
+## VIDEO LINK (The video explains the initial prototype of Phase 1 and why it's required) —** [https://youtu.be/BV8Cxm6Gn_E](https://youtu.be/BV8Cxm6Gn_E)
 ![Image 4](images/4.png)
 ![Image 5](images/5.png)
 ![Image 6](images/6.png)
@@ -149,7 +149,7 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
 - Test the integration end-to-end by connecting an MCP client (e.g., Claude Desktop) and verifying that the LLM now receives typed parameter hints in its tool definitions.
 
-- **Permissive Generation (Inform, Don't Enforce):** During Phase 1, the generated schemas are strictly used to *inform* the LLM — updating the `inputSchema` field in `server.py` so the LLM receives detailed parameter rules instead of a blank `{"type": "object"}`. At this stage, the server will not actively block requests if the LLM violates the schema; it relies on sktime's existing internal errors (the current behavior). This allows us to safely validate the accuracy of the generated schemas in production before turning on strict server-side enforcement in Phase 2 (Week 6). If the NLP parser cannot confidently map a docstring type to a JSON primitive, it will leave the parameter's JSON constraint open and inject the raw type requirements into the text `description`, preventing False Positive rejections where valid inputs might be accidentally blocked.
+- **Permissive Generation (First we inform and don't try to enforce):** During Phase 1, the generated schemas are strictly used to *inform* the LLM updating the `inputSchema` field in `server.py` so the LLM receives detailed parameter rules instead of a blank `{"type": "object"}`. At this stage, the server will not actively block requests if the LLM violates the schema; it relies on sktime's existing internal errors (the current behavior). This allows us to safely validate the accuracy of the generated schemas in production before turning on strict server-side enforcement in Phase 2 (Week 6). If the NLP parser cannot confidently map a docstring type to a JSON primitive, it will leave the parameter's JSON constraint open and inject the raw type requirements into the text `description`, preventing False Positive rejections where valid inputs might be accidentally blocked.
 
 ---
 
