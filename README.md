@@ -17,14 +17,15 @@ When auditing the current architecture and reviewing community issues, three cri
 For an LLM to reliably use a tool, it requires a strict JSON Schema (a "rulebook") detailing exactly what data types are allowed. However, the underlying sktime estimators currently lack `__init__` type hints. Without these hints, the MCP server cannot generate a strict schema.
 
 ![Image 1](images/1.png)
+
 *Fig1. The image clearly shows us the missing type hints in the forecaster **ARIMA**. The schema which the LLM receives does not **contain** any type information, forcing it to guess parameter types and making it significantly more prone to hallucinations.*
 
 ---
-![Image 2](images/2.png)
 ### 2. Fatal Exception Leaks (Why can't the LLM fix its own mistakes?)
 
 When an LLM inevitably hallucinates a bad parameter, the server lacks a defensive barrier. Instead of gracefully rejecting the input, the underlying sktime engine throws a raw Python `TypeError` or `ValueError` (as tracked in issues #172 and #192). This exception completely crashes into the agent loop. The LLM receives a messy stack trace instead of an "LLM-recoverable error" — a structured JSON response (e.g., `{"error": "horizon must be an integer"}`) that would allow the agent to understand its mistake and try again on the next turn.
 
+![Image 2](images/2.png)
 *Fig2. Simulation of an LLM hallucination where a string is incorrectly passed to the integer-typed `maxiter` parameter in ARIMA.*
 
 *1) The hallucinated data passes into the object without triggering any guardrail, demonstrating the complete absence of a validation boundary.*
@@ -35,7 +36,7 @@ When an LLM inevitably hallucinates a bad parameter, the server lacks a defensiv
 
 ### 3. Verification Bottleneck (How do we know it works?)
 
-As hallucinations take various forms — wrong data types, out-of-bounds ranges, or incorrect tool selection — maintainers cannot rely on manual, human testing for every prompt variation. The project currently lacks a programmatic way to measure whether the MCP server is actually guiding the LLM correctly.
+As hallucinations take various forms  wrong data types, out-of-bounds ranges, or incorrect tool selection, maintainers cannot rely on manual, human testing for every prompt variation. The project currently lacks a programmatic way to measure whether the MCP server is actually guiding the LLM correctly.
 
 ---
 
