@@ -17,7 +17,7 @@ When auditing the current architecture and reviewing community issues, three cri
 For an LLM to reliably use a tool, it requires a strict JSON Schema (a "rulebook") detailing exactly what data types are allowed. However, the underlying sktime estimators currently lack `__init__` type hints. Without these hints, the MCP server cannot generate a strict schema.
 
 ![Image 1](images/1.png)
-*Fig1. The image clearly shows us the missing type hints in the forecaster **ARIMA**, the schema which LLM gets does not **contain** any information due to which it ends up guessing the types hence more prone to hallucinations*
+*Fig1. The image clearly shows us the missing type hints in the forecaster **ARIMA**. The schema which the LLM receives does not **contain** any type information, forcing it to guess parameter types and making it significantly more prone to hallucinations.*
 
 ---
 ![Image 2](images/2.png)
@@ -25,11 +25,11 @@ For an LLM to reliably use a tool, it requires a strict JSON Schema (a "rulebook
 
 When an LLM inevitably hallucinates a bad parameter, the server lacks a defensive barrier. Instead of gracefully rejecting the input, the underlying sktime engine throws a raw Python `TypeError` or `ValueError` (as tracked in issues #172 and #192). This exception completely crashes into the agent loop. The LLM receives a messy stack trace instead of an "LLM-recoverable error" — a structured JSON response (e.g., `{"error": "horizon must be an integer"}`) that would allow the agent to understand its mistake and try again on the next turn.
 
-*Fig2. in this **particular code** I passed a string to **maxiter** parameter in ARIMA instead of **the integer**.*
+*Fig2. Simulation of an LLM hallucination where a string is incorrectly passed to the integer-typed `maxiter` parameter in ARIMA.*
 
-*1) The "hallucinated data" is sent inside the object without any issue, no guardrails present here*
+*1) The hallucinated data passes into the object without triggering any guardrail, demonstrating the complete absence of a validation boundary.*
 
-*2) The error message which LLM receive **contains** no value at all, hence the LLM does not even know where exactly it went **wrong**.*
+*2) The resulting error message provides no actionable context, leaving the LLM unable to identify or correct its mistake.*
 
 ---
 
@@ -49,7 +49,7 @@ We cannot control an LLM's non-determinism, but we can build an infrastructure t
 
 ### Why Not Just Pass the Description?
 
-While passing the English description gives the LLM context, it does not provide *enforcement*. If we only pass descriptions, the LLM can arbitrarily decide to pass `"100"` instead of `100`. By generating a strict JSON Schema, we utilize the MCP protocol to mathematically block the LLM from passing invalid data types.
+While passing the English description gives the LLM context, it does not provide *enforcement*. If we only pass descriptions, the LLM can arbitrarily decide to pass `"100"` instead of `100`. By generating a strict JSON Schema, we utilize the MCP protocol to formally validate and block the LLM from passing invalid data types.
 
 ### Code vs. Documentation
 
@@ -70,11 +70,11 @@ To solve this, Phase 1 will implement a robust NLP parser utilizing `numpydoc.do
 
 - **Required Status:** Inspect will be used exclusively as the final safety net to determine if a parameter has no default value and must be injected into the schema's `"required"` list.
 
-## VIDEO LINK (The video explains the initial prototype of Phase 1 and why it's required) —** [https://youtu.be/BV8Cxm6Gn_E](https://youtu.be/BV8Cxm6Gn_E)
+**VIDEO LINK (The video explains the initial prototype of Phase 1 and why it's required) —** [https://youtu.be/BV8Cxm6Gn_E](https://youtu.be/BV8Cxm6Gn_E)
 ![Image 4](images/4.png)
 ![Image 5](images/5.png)
 ![Image 6](images/6.png)
-*Fig 4-6: The Intelligent Schema Compiler in action. The prototype successfully parses standard types (Case 1) and complex union types like "array-like" (Case 2) into mathematically strict JSON Schema constraints. For highly complex Python types that cannot map to JSON (Case 3), the parser triggers a Graceful Degradation fallback — opening the JSON constraints to prevent false API rejections, while injecting the raw type requirements directly into the text description so the LLM can self-correct using its native reasoning.*
+*Fig 4-6: The Intelligent Schema Compiler in action. The prototype successfully parses standard types (Case 1) and complex union types like "array-like" (Case 2) into formally validated JSON Schema constraints. For highly complex Python types that cannot map to JSON (Case 3), the parser triggers a Graceful Degradation fallback — opening the JSON constraints to prevent false API rejections, while injecting the raw type requirements directly into the text description so the LLM can self-correct using its native reasoning.*
 
 ---
 
@@ -98,19 +98,20 @@ Phase 3 is the essential validation of the entire project. While Phases 1 and 2 
 
 **The Continuation Logic:**
 
-- **Validating the Phase 1 Rulebook:** Using DeepEval's GEval metric, the framework uses the dynamic schemas generated in Phase 1 as the source of truth to score the LLM. It answers: *"Did my generated schema provide enough clarity for the LLM to choose the right parameters?"*
+- **Validating the Phase 1 Rulebook:** Each test case will first run a deterministic `jsonschema.validate()` assertion directly on the captured ToolCall trace, providing a structural correctness guarantee. A GEval LLM judge then scores the qualitative semantic quality. Together, they answer: *"Did my generated schema enforce the correct structure, and did it provide enough clarity for the LLM to choose the right parameters?"*
 
 - **Testing the Phase 2 Recovery:** The suite specifically benchmarks the Self-Correction Rate. When the Middleware (Phase 2) sends back an error message, Phase 3 measures if the LLM successfully uses that specific feedback to rectify its tool call in a single turn.
 
 - **Automating the Human Loop:** Currently, sktime-mcp reliability is measured by user complaints. I will replace this with a synthetic evaluation dataset of 30+ core workflows. This allows maintainers to verify that a new update hasn't "blinded" the agent, ensuring that the improvements from Phases 1 and 2 remain robust across different model versions (Claude, Gemini, Llama).
-- **Strategic Isolation:** Explicitly decouple the Agentic Benchmarking suite from the core pytest suite. This tool will be architected as a manual diagnostic utility (eg  make benchmark or python -m eval), ensuring no token costs or non-deterministic failures are introduced into the standard PR CI/CD pipeline.
+
+- **Strategic Isolation with Optional CI Path:** The benchmarking suite is architected as a manual diagnostic utility (e.g., `make benchmark` or `python -m eval`) to keep token costs out of the standard PR pipeline. The 'Bring Your Own Key' / Ollama fallback architecture intentionally enables future optional CI integration, which maintainers can activate without any changes to the suite itself.
 
 To ensure this remains a permanent, zero-cost asset for the community; the suite features a 'Bring Your Own Key' architecture. Maintainers can choose between high-fidelity frontier judges (e.g., GPT-4o) or route the judge to a local server (e.g., Ollama) for free, private testing in GitHub Actions.
 
 ![Image 7](images/7.png)
 ![Image 8](images/8.png)
 
-*Fig. 7-8. These screenshots demonstrate the final automated testing pipeline evaluating simulated LLM ToolCall traces against the dynamic schemas generated in Phase 1. Using a 'Bring Your Own Key' architecture, a custom **Gemini-2.5-Flash-Lite** judge mathematically scores schema adherence. The top image shows a passing test (Score: 1.0) where the LLM successfully adhered to the integer constraint (**maxiter=100**). The bottom image demonstrates the framework successfully catching a simulated hallucination (Score: 0.0), correctly identifying that the string **'hundred'** violates the schema constraint. This pipeline replaces manual QA, allowing maintainers to mathematically verify that any future changes to prompts or schemas do not degrade the LLM's performance.*
+*Fig. 7-8. These screenshots demonstrate the final automated testing pipeline evaluating simulated LLM ToolCall traces against the dynamic schemas generated in Phase 1. Using a 'Bring Your Own Key' architecture, a custom **Gemini-2.5-Flash-Lite** judge scores semantic schema adherence. The top image shows a passing test (Score: 1.0) where the LLM successfully adhered to the integer constraint (**maxiter=100**). The bottom image demonstrates the framework successfully catching a simulated hallucination (Score: 0.0), correctly identifying that the string **'hundred'** violates the schema constraint. Combined with the deterministic `jsonschema.validate()` layer, this pipeline replaces manual QA, allowing maintainers to formally verify that any future changes to prompts or schemas do not degrade the LLM's performance.*
 
 ---
 
@@ -149,13 +150,13 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
 - Test the integration end-to-end by connecting an MCP client (e.g., Claude Desktop) and verifying that the LLM now receives typed parameter hints in its tool definitions.
 
-- **Permissive Generation (First we inform and don't try to enforce):** During Phase 1, the generated schemas are strictly used to *inform* the LLM updating the `inputSchema` field in `server.py` so the LLM receives detailed parameter rules instead of a blank `{"type": "object"}`. At this stage, the server will not actively block requests if the LLM violates the schema; it relies on sktime's existing internal errors (the current behavior). This allows us to safely validate the accuracy of the generated schemas in production before turning on strict server-side enforcement in Phase 2 (Week 6). If the NLP parser cannot confidently map a docstring type to a JSON primitive, it will leave the parameter's JSON constraint open and inject the raw type requirements into the text `description`, preventing False Positive rejections where valid inputs might be accidentally blocked.
+- **Permissive Generation (Inform, Don't Enforce):** During Phase 1, the generated schemas are strictly used to *inform* the LLM — updating the `inputSchema` field in `server.py` so the LLM receives detailed parameter rules instead of a blank `{"type": "object"}`. At this stage, the server will not actively block requests if the LLM violates the schema; it relies on sktime's existing internal errors (the current behavior). This allows us to safely validate the accuracy of the generated schemas in production before turning on strict server-side enforcement in Phase 2 (Week 6). If the NLP parser cannot confidently map a docstring type to a JSON primitive, it will leave the parameter's JSON constraint open and inject the raw type requirements into the text `description`, preventing False Positive rejections where valid inputs might be accidentally blocked.
 
 ---
 
 ### Week 3: NLP Docstring Parsing with numpydoc
 
-**Objective:** Solve the None-default problem, the Union Type problem and the unmentioned data types in default issue by parsing human-readable type information from sktime's numpydoc-formatted docstrings. Also the docstring description gives us the complete description regarding the parameter helping the LLM even more better guesses.
+**Objective:** Solve the `None`-default problem, the Union Type problem, and the incomplete type information from default values by parsing human-readable type information from sktime's numpydoc-formatted docstrings. The docstring descriptions also provide rich parameter context, enabling the LLM to make significantly more accurate tool calls.
 
 **Tasks:**
 
@@ -201,7 +202,7 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
 **Tasks:**
 
-- Run the schema generator against the full set of forecasters currently supported by sktime-mcp's execution tools. The target is ≥85% strict schema coverage across this set; parameters that fail parsing will fall back to description-only hints rather than blocking tool registration. Expansion to other estimator types will be scoped based on maintainer direction during the review phase.
+- Run the schema generator against the full set of forecasters currently supported by sktime-mcp's execution tools. The target is ≥85% strict schema coverage across this set; parameters that fail parsing will fall back to description-only hints rather than blocking tool registration. Expansion to other estimator types (classifiers, transformers, clusterers) will be scoped based on maintainer direction during the review phase.
 
 - Catalog the success rate: track what percentage of parameters are strictly typed vs. gracefully degraded, providing a quantitative metric for the pipeline's coverage.
 
@@ -234,7 +235,7 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
 - Inject the validation function into `server.py`'s request handling pipeline, ensuring it executes **before** any estimator instantiation or method call.
 
-- **Enforcement Intensity controlled via Feature Flag:** To safely introduce strict validation without risking False Positive rejections from imperfect schemas, `validate_tool_params()` will be controlled by an environment variable (`ENFORCE_STRICT_SCHEMA`). In **Audit Mode** (default initially), validation runs but failures only log a warning and let the payload pass through to sktime. In **Strict Mode**, validation actively intercepts malformed payloads and returns the structured `SCHEMA_VALIDATION_ERROR` to the LLM for self-correction. The switch to Strict Mode by default will be made once Phase 3 benchmarks prove the schemas are highly accurate.
+- **Enforcement via Feature Flag:** To safely introduce strict validation without risking False Positive rejections from imperfect schemas, `validate_tool_params()` will be controlled by an environment variable (`ENFORCE_STRICT_SCHEMA`). In **Audit Mode** (default initially), validation runs but failures only log a warning and let the payload pass through to sktime. In **Strict Mode**, validation actively intercepts malformed payloads and returns the structured `SCHEMA_VALIDATION_ERROR` to the LLM for self-correction. The switch to Strict Mode by default will be made once Phase 3 benchmarks prove the schemas are highly accurate.
 
 - Wrap all sktime execution boundaries in `executor.py` (`fit`, `predict`) with a generic `try/except Exception` block to safely intercept any runtime errors that pass through schema validation. Implement a `warnings.catch_warnings()` context manager to capture soft warnings (e.g., `ConvergenceWarning`) and forward them to the LLM as self-correction hints.
 
@@ -263,7 +264,7 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
   - `SCHEMA_VALIDATION_ERROR` — **New.** Type mismatch caught by the jsonschema middleware before reaching sktime. This is the primary contribution of Phase 2.
 
-  - `EXECUTION_ERROR` — The EXECUTION_ERROR wrapper will specifically target sktime and scikit-learn domain exceptions while allowing critical system exceptions (e.g., MemoryError, KeyboardInterrupt) to propagate, ensuring server observability is maintained.
+  - `EXECUTION_ERROR` — Catches legitimate runtime domain errors from `sktime` and `scikit-learn` (e.g., `NotFittedError`, convergence failures, scipy crashes) that currently leak as raw tracebacks. Critical system exceptions (e.g., `MemoryError`, `KeyboardInterrupt`) are intentionally allowed to propagate to ensure server observability is maintained.
 
 - Write parameterized pytest test cases covering:
 
@@ -316,15 +317,13 @@ To ensure this remains a permanent, zero-cost asset for the community; the suite
 
 **Tasks:**
 
-- Build an `EvaluationDataset` containing 20–30 parameterized test prompts representing common and complex sktime-mcp user interactions:
+- Build an `EvaluationDataset` containing 30 parameterized test prompts that simulate realistic, multi-step agentic workflows. To ensure comprehensive coverage, the dataset will include at least 3 hallucination failure types per category (wrong data type, out-of-bounds value, hallucinated parameter name). Example prompts:
 
-  - `"Forecast the next 12 months using ARIMA with max iterations set to 200"`
+  - *"Load the airline dataset, automatically format it to remove any duplicates, and compare an ARIMA model (maxiter=200) against an ExponentialSmoothing model. Return the 12-month forecast from the best performer."*
 
-  - `"Fit an ExponentialSmoothing model on data_handle xyz"`
+  - *"I have a dataset with some missing values. Impute them using forward fill, then run a NaiveForecaster using the 'last' strategy. Let me know if it crashes."*
 
-  - `"Run NaiveForecaster with strategy set to 'last'"`
-
-- Wire the evaluation pipeline: for each prompt in the dataset, capture the LLM's ToolCall trace, inject it into an `LLMTestCase`, and run the GEval judge to produce a schema adherence score.
+- Wire the evaluation pipeline: for each complex prompt in the dataset, capture the complete chain of `ToolCall` traces generated by the LLM, inject them into a DeepEval `LLMTestCase`, and run the deterministic validator + GEval judge to mathematically verify the schema adherence across the entire agentic loop.
 
 - Write comprehensive documentation covering the three parts — Schema Generation, Middleware, DeepEval suite.
 
